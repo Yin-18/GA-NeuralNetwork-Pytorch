@@ -1,0 +1,10 @@
+# Pycharm #
+.idea/
+
+# VsCode #
+.vscode/
+
+# Trained Models #
+trainedModels/
+trainedPopulation/
+aaaaa.py
