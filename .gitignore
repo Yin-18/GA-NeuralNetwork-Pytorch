@@ -6,5 +6,6 @@
 
 # Trained Models #
 trainedModels/
-trainedPopulation/
+trainedGA1/
+trainedGA2/
 aaaaa.py

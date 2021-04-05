@@ -8,34 +8,34 @@ from models.lenet import LeNet_0
 from scripts.Test_Acc import test_Acc
 from scripts.data_loader import dataloader_MNIST
 
+# (6, 1, 5, 1)->150
+# (16, 6, 5, 5)->2400
+# (10, 256)->2560
+# chrom [x0, x1, x2, x3, x4, x5...] * 5110
 
+g_num_parameters = 5110
 
-# chrom:[conv, conv, fc]
 class Chrom():
     def __init__(self):
-        self.parameters = {}
-        self.mutation_strength = {}
+        self.parameters = None
+        self.matation_strength = 2.0
         self.mean_range = (-1, 1)
         self.std_range = (0, 1)
         self.fitness = 0.0
 
+        # 初始化染色体参数
         self._initialize()
 
-    def __getitem__(self, item):
-        return self.parameters[item]
-
     def _initialize(self):
-        '''对self.parameters进行初始化'''
-        layers_list = {"conv1": (6, 1, 5, 5), "conv2": (16, 6, 5, 5), "fc1": (10, 256)}
+        mean = np.random.random_sample() * (self.mean_range[1] - self.mean_range[0]) + self.mean_range[0]
+        std = np.random.random_sample() * (self.std_range[1] - self.std_range[0]) + self.std_range[0]
 
-        for layer in layers_list:
-            mean = np.random.random_sample() * (self.mean_range[1] - self.mean_range[0]) + self.mean_range[0]
-            std = np.random.random_sample() * (self.std_range[1] - self.std_range[0]) + self.std_range[0]
-            self.parameters[layer] = np.random.normal(mean, std, size=layers_list[layer])
+        # parameters是ndarray对象
+        self.parameters = np.random.normal(mean, std, size=(g_num_parameters))
 
 
-class GA_NeuralNet():
-    def __init__(self, test_loader, pop_size=20, generations=1000, x_prob=0.8, m_prob=0.2):
+class GA_2_NeuralNet():
+    def __init__(self, test_loader, pop_size=30, generations=1000, x_prob=0.8, m_prob=0.2):
         self.test_loader = test_loader
         self.x_prob = x_prob
         self.m_prob = m_prob
@@ -44,10 +44,7 @@ class GA_NeuralNet():
         self.best = []
         self.pop = []
 
-    def initialize(self):
-        """
-        初始化一个种群
-        """
+    def initialize(self):  #初始化种群
         for i in range(self.pop_size):
             self.pop.append(Chrom())
 
@@ -66,11 +63,13 @@ class GA_NeuralNet():
             print("[Gen %d]Best Chrom Fitness:%.4f" % (i + 1, self.pop[0].fitness))
 
             #保存进化中的种群
-            if i % 10 == 9:
+            if i % 5 == 4:
                 self.save_population()
 
     def _evolution_step(self):
+        # shuffle种群
         np.random.shuffle(self.pop)
+        # 产生后代的列表
         offspring_list = []
         for _ in range(int(self.pop_size / 2)):
             parent1 = self._tournament_selection()
@@ -78,8 +77,8 @@ class GA_NeuralNet():
             # crossover
             off1, off2 = self._crossover(parent1, parent2)
             # mutation
-            self._mutation(off1)
-            self._mutation(off2)
+            off1 = self._mutation(off1)
+            off2 = self._mutation(off2)
             # add to offspringlist
             offspring_list.append(off1)
             offspring_list.append(off2)
@@ -114,41 +113,43 @@ class GA_NeuralNet():
             chrom.fitness = fitness
 
     def _crossover(self, chrom1, chrom2):
+        # 基于python传参可变类型的限制 需要进行deepcopy
         p1 = copy.deepcopy(chrom1)
         p2 = copy.deepcopy(chrom2)
-        if np.random.random_sample() < self.x_prob:
-            p1.parameters["conv1"], p2.parameters["conv1"] = p2.parameters["conv1"], p1.parameters["conv1"]
-        if np.random.random_sample() < self.x_prob:
-            p1.parameters["conv2"], p2.parameters["conv2"] = p2.parameters["conv2"], p1.parameters["conv2"]
-        if np.random.random_sample() < self.x_prob:
-            p1.parameters["fc1"], p2.parameters["fc1"] = p2.parameters["fc1"], p1.parameters["fc1"]
+        prob = np.random.random_sample(size=g_num_parameters)
+        mask = (prob < self.x_prob)
+        # Numpy布尔索引 交叉操作
+        p1.parameters[mask], p2.parameters[mask] = p2.parameters[mask], p1.parameters[mask]
         return p1, p2
 
     def _mutation(self, chrom):
-        if np.random.random_sample() < self.m_prob:
-            weight = chrom.parameters["conv1"]
-            chrom.parameters["conv1"] = weight + np.random.normal(0, 1, size=weight.shape)
-        if np.random.random_sample() < self.m_prob:
-            weight = chrom.parameters["conv2"]
-            chrom.parameters["conv2"] = weight + np.random.normal(0, 1, size=weight.shape)
-        if np.random.random_sample() < self.m_prob:
-            weight = chrom.parameters["fc1"]
-            chrom.parameters["fc1"] = weight + np.random.normal(0, 1, size=weight.shape)
+        # 这里不确定是不是对chrom进行了原地操作
+        prob = np.random.random_sample(size=g_num_parameters)
+        mask = (prob < self.m_prob)
+        size = mask.sum()
+        chrom.parameters[mask] = chrom.parameters[mask] + np.random.normal(0, chrom.matation_strength, size=size)
+        return chrom
 
+    def parse_chrom(self, chrom:Chrom):  # 解码染色体为神经网络
+        conv1 = chrom.parameters[:150].reshape((6, 1, 5, 5), order='C')
+        conv2 = chrom.parameters[150:2550].reshape((16, 6, 5, 5), order='C')
+        fc1 = chrom.parameters[2550:].reshape((10, 256), order='C')
 
-
-    def parse_chrom(self, chrom):
         net = LeNet_0()
+
         # conv1
-        conv1_weight = torch.from_numpy(chrom.parameters["conv1"], ).type(torch.FloatTensor)
+        conv1_weight = torch.from_numpy(conv1).type(torch.FloatTensor)
         net.conv1.weight = nn.Parameter(conv1_weight)
         # conv2
-        conv2_weight = torch.from_numpy(chrom.parameters["conv2"]).type(torch.FloatTensor)
+        conv2_weight = torch.from_numpy(conv2).type(torch.FloatTensor)
         net.conv2.weight = nn.Parameter(conv2_weight)
-        # conv3
-        fc1_weight = torch.from_numpy(chrom.parameters["fc1"]).type(torch.FloatTensor)
+        # fc1
+        fc1_weight = torch.from_numpy(fc1).type(torch.FloatTensor)
         net.fc1.weight = nn.Parameter(fc1_weight)
         return net
+
+
+
 
     def _tournament_selection(self):  # 锦标赛选择算子
         chrom1_idx = np.random.randint(0, self.pop_size)
@@ -159,9 +160,12 @@ class GA_NeuralNet():
             winner = self.pop[chrom2_idx]
         return winner
 
-    def save_population(self):
+    def _rouletteWheelSelection(self):  # 轮盘赌选择算子
+        pass
+
+    def save_population(self):  # 保存种群
         acc = str(self.best[-1]).replace(".", "_")
-        PATH = "./trainedGA1/" + "GA_bestAcc(" + acc + ")_size" + str(self.pop_size) + ".pkl"
+        PATH = "./trainedGA2/" + "GA_bestAcc(" + acc + ")_size" + str(self.pop_size) + ".pkl"
         with open(PATH, "wb") as f:
             data = {"pop":self.pop, "best":self.best}
             try:
@@ -170,7 +174,7 @@ class GA_NeuralNet():
             except:
                 print("Save Error!")
 
-    def load_population(self, PATH):
+    def load_population(self, PATH):  # 加载种群
         with open(PATH, "rb") as f:
             data = pickle.load(f)
 
@@ -178,8 +182,12 @@ class GA_NeuralNet():
             self.best = data["best"]
 
 
+
+
 if __name__ == "__main__":
     _, test_loader = dataloader_MNIST(sampler=False)
-    ga = GA_NeuralNet(test_loader)
+    ga = GA_2_NeuralNet(test_loader)
     ga.initialize()
     ga.evolution()
+
+
