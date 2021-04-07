@@ -5,7 +5,7 @@
 .vscode/
 
 # Trained Models #
-trainedModels/
+SGD/trainedModels/
 trainedGA1/
 trainedGA2/
 aaaaa.py

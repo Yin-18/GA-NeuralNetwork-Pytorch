@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+# 0:用于MNIST 1:用于CIFAR-10
 class LeNet_0(nn.Module):
     def __init__(self):
         super(LeNet_0, self).__init__()
@@ -15,7 +17,8 @@ class LeNet_0(nn.Module):
         x = self.pool( F.relu(self.conv2(x) ) )
         x = x.view(-1, 4*4*16)
         x = self.fc1(x)
-        return F.log_softmax(x, dim=1)
+        #return F.log_softmax(x, dim=1)
+        return x
 
     def show(self):
         print("conv1", self.conv1.weight.shape)

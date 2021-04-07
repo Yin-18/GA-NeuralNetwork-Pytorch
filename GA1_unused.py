@@ -5,7 +5,7 @@ import copy
 import pickle
 
 from models.lenet import LeNet_0
-from scripts.Test_Acc import test_Acc
+from scripts.test_acc import test_Acc
 from scripts.data_loader import dataloader_MNIST
 
 

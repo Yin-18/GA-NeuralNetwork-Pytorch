@@ -18,9 +18,9 @@ g_num_parameters = 5110
 class Chrom():
     def __init__(self):
         self.parameters = None
-        self.matation_strength = 10.0
-        self.mean_range = (-1, 1)
-        self.std_range = (0, 1)
+        self.matation_strength = 5
+        self.mean_range = (-5, 5)
+        self.std_range = (0, 5)
         self.fitness = 0.0
 
         # 初始化染色体参数
@@ -35,14 +35,24 @@ class Chrom():
 
 
 class GA_2_NeuralNet():
-    def __init__(self, test_loader, pop_size=30, generations=1000, x_prob=0.8, m_prob=0.2):
+    def __init__(self, train_loader, test_loader, pop_size=30, generations=1000,
+                 x_prob=0.8, m_prob=0.2):
+        self.train_loader = train_loader
         self.test_loader = test_loader
         self.x_prob = x_prob
         self.m_prob = m_prob
         self.pop_size = pop_size
         self.generations = generations
+        self.gen = 0
+
+
+        # 要保存的信息
         self.best = []
         self.pop = []
+        self.train_acc_chroms = []
+        self.val_acc_charoms = []
+
+
 
     def initialize(self):  #初始化种群
         for i in range(self.pop_size):
@@ -51,18 +61,21 @@ class GA_2_NeuralNet():
         # 评价初始化的种群
         self._evaluate(self.pop)
 
+        # 对第0代进行输出信息并保存
+        self.pop.sort(key=lambda chrom:chrom.fitness, reverse=True)
+        self._record()
+
     def evolution(self):
-        gen0list = sorted(self.pop, key=lambda chrom: chrom.fitness, reverse=True)
-        self.best.append(gen0list[0].fitness)
-        print("[Gen 0]Best Chrom Fitness:%.4f" % (gen0list[0].fitness))
         # 开始进化
-        for i in range(self.generations):
+        for i in range(self.gen, self.generations):
+            self.gen = i + 1
             self._evolution_step()  # 扩充了self.pop(由父代和子代组成 = 2*pop_size）
             self._environment_selection()   # 删减了self.pop(回到 pop_size)
-            self.best.append(self.pop[0].fitness)
-            print("[Gen %d]Best Chrom Fitness:%.4f" % (i + 1, self.pop[0].fitness))
 
-            #保存进化中的种群
+            # 对第i代进行输出并保存
+            self._record()
+
+            # 保存进化中的种群
             if i % 10 == 9:
                 self.save_population()
 
@@ -82,8 +95,9 @@ class GA_2_NeuralNet():
             # add to offspringlist
             offspring_list.append(off1)
             offspring_list.append(off2)
-
+        # 评价后代种群
         self._evaluate(offspring_list)
+        # 加入到整个种群中，随后进行环境选择
         self.pop.extend(offspring_list)
 
     def _environment_selection(self):
@@ -109,8 +123,16 @@ class GA_2_NeuralNet():
     def _evaluate(self, population: list):
         for chrom in population:
             net = self.parse_chrom(chrom)
-            fitness = test_Acc(net, self.test_loader)
+            fitness = test_Acc(net, self.train_loader)
             chrom.fitness = fitness
+
+    def validation(self, population:list):
+        val_acc_charoms = []
+        for chrom in population:
+            net = self.parse_chrom(chrom)
+            val_acc = test_Acc(net, self.test_loader)
+            val_acc_charoms.append(val_acc)
+        return val_acc_charoms
 
     def _crossover(self, chrom1, chrom2):
         # 基于python传参可变类型的限制 需要进行deepcopy
@@ -148,9 +170,6 @@ class GA_2_NeuralNet():
         net.fc1.weight = nn.Parameter(fc1_weight)
         return net
 
-
-
-
     def _tournament_selection(self):  # 锦标赛选择算子
         chrom1_idx = np.random.randint(0, self.pop_size)
         chrom2_idx = np.random.randint(0, self.pop_size)
@@ -163,11 +182,22 @@ class GA_2_NeuralNet():
     def _rouletteWheelSelection(self):  # 轮盘赌选择算子
         pass
 
+    def _record(self):
+        # 对第i代进行输出并保存
+        self.best.append(self.pop[0].fitness)  # 将该代最优fitness加入到best列表
+        print("[Gen %d]Best Chrom Fitness:%.4f" % (self.gen, self.pop[0].fitness))
+        train_acc_chromsGen = [chrom.fitness for chrom in self.pop]
+        self.train_acc_chroms.append(train_acc_chromsGen)
+        val_acc_chromssGen = self.validation(self.pop)
+        self.val_acc_charoms.append(val_acc_chromssGen)
+
     def save_population(self):  # 保存种群
         acc = str(self.best[-1]).replace(".", "_")
-        PATH = "./trainedGA2/" + "GA_bestAcc(" + acc + ")_size" + str(self.pop_size) + ".pkl"
+        if len(acc)==5: acc = acc + '0'
+
+        PATH = "./trainedGA2_details/" + "Gen"+ str(self.gen) + "_bestAcc(" + acc + ")_size" + str(self.pop_size) + ".pkl"
         with open(PATH, "wb") as f:
-            data = {"pop":self.pop, "best":self.best}
+            data = {"pop":self.pop, "best":self.best, "train_acc_chroms":self.train_acc_chroms, "val_acc_chroms":self.val_acc_charoms}
             try:
                 pickle.dump(data, f)
                 print("Saved the trained model! Path: " + PATH)
@@ -177,24 +207,24 @@ class GA_2_NeuralNet():
     def load_population(self, PATH):  # 加载种群
         with open(PATH, "rb") as f:
             data = pickle.load(f)
-
             self.pop = data["pop"]
             self.best = data["best"]
-
+            self.train_acc_chroms = data["train_acc_chroms"]
+            self.val_acc_charoms = data["val_acc_chroms"]
+            self.gen = len(self.best) - 1
 
 
 
 if __name__ == "__main__":
-    test_loader, train_loader = dataloader_MNIST(batch_size={"train":32, "test":32},train_num_samples=2000, test_num_samples=10000,sampler=True)
-    ga = GA_2_NeuralNet(train_loader, generations=2000)
+    train_loader, test_loader = dataloader_MNIST(batch_size={"train":1000, "test":1000},train_num_samples=10000, test_num_samples=10000,sampler=True)
+    ga = GA_2_NeuralNet(train_loader, test_loader, generations=1000)
     #ga.initialize()
-    ga.load_population("./trainedGA2/GA_bestAcc(0_8758)_size30.pkl")
+    ga.load_population("./trainedGA2_details/")
     #ga.evolution()
     net = ga.parse_chrom(ga.pop[0])
-    acc = test_Acc(net, test_loader)
-    acc_train = test_Acc(net, train_loader)
-
-    print(acc)
-    print(acc_train)
+    acc_0 = test_Acc(net, train_loader)
+    acc_1 = test_Acc(net, test_loader)
+    print(acc_0)
+    print(acc_1)
 
 
